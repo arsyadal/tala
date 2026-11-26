@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.webp" alt="Tala logo" width="360">
+</p>
+
 # Tala
 
 **Find your flow.**
@@ -6,9 +10,9 @@
 
 [![Native CI on main](https://github.com/arsyadal/tala/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arsyadal/tala/actions/workflows/ci.yml)
 
-Tala is a local terminal workspace for browsing project folders, running shells and coding agents in tabs, and working with Git. It runs inside your terminal without a browser, server, or Node.js runtime. WSL is an optional shell profile on Windows, not a requirement.
+Tala is a local terminal workspace for browsing and editing project files, running shells and coding agents in tabs or split panes, and working with Git. It runs inside your terminal without a browser, server, or Node.js runtime. WSL is an optional shell profile on Windows, not a requirement.
 
-**Release status:** Tala is in development. The matrix below describes the platforms the project targets, not a guarantee that every build is ready to ship. Check Native CI for the current results. A release also requires manual checks on Windows, macOS, and Linux.
+**Release status:** Tala is in active development and has not published a tagged release yet. The matrix below describes the platforms the project targets. Check Native CI for current build results; a release also requires manual verification on Windows, macOS, and Linux.
 
 ## Quick start
 
@@ -20,7 +24,7 @@ cd tala
 cargo run --locked -- .
 ```
 
-Press `F5` to open a shell. To switch projects, press `F2`, navigate to a folder, then press `o` to make it the workspace. New sessions start there; existing sessions keep their working directories.
+Press `F5` to open a shell, `Ctrl+Shift+P` for the Command Palette, or `Ctrl+P` for Quick Open. To switch projects, press `Ctrl+Shift+O` (recent workspaces or typed path), or press `F2`, navigate to a folder, and press `o`.
 
 To install a `tala` command from this checkout:
 
@@ -46,17 +50,30 @@ Shells must be available on the machine. On Linux, the system clipboard needs an
 | Key | Action |
 | --- | --- |
 | `F1` | Open help. |
-| `F2` | Browse files. Use `↑` / `↓` to select, `Enter` to open, `Backspace` to go up, and `o` to use the current folder. |
-| `F3` | Open the launcher. Press `Enter` to start the selected profile or `r` to rescan. |
-| `F4` | Open Git. `Enter` shows a diff, `d` shows the staged diff, and `r` refreshes status. |
-| `F5` / `F6` / `F7` | Open a terminal, switch to the next tab, or close the current tab. |
-| `F8` / `F9` | Copy terminal selection or preview text, or paste from the clipboard. |
+| `Ctrl+Shift+P` | Open Command Palette (filter and run any action). |
+| `Ctrl+P` | Quick Open file in the active workspace. |
+| `Ctrl+Shift+O` | Switch workspace from recent folders or enter a path. |
+| `Ctrl+B` | Toggle sidebar visibility. |
+| `F2` | Files panel: `↑`/`↓` select, `Enter` open, `Backspace` up, `o` set workspace, `n` new file, `N` new folder, `R` rename, `d`/`Delete` delete (with confirmation). |
+| `F3` / `Ctrl+Shift+A` | Launcher panel: `Enter` starts the selected shell or agent, `r` rescans `PATH`. |
+| `F4` / `Ctrl+Shift+G` | Git panel: `Enter` working diff, `d` staged diff, `s`/`u` stage/unstage, `c` commit, `f`/`p`/`P` fetch/pull/push, `b` branches, `S` stash push, `t` stash list/pop, `w` worktrees, `r` refresh. |
+| `F5` / `Ctrl+Shift+T` | Open a new terminal tab. |
+| `Ctrl+Shift+D` / `Ctrl+Shift+E` | Split the current terminal tab vertically or horizontally (up to 4 panes). |
+| `Alt+Left` / `Alt+Right` | Move focus between split panes. |
+| `F6` / `F7` | Switch to the next tab, or close the active pane/tab. |
+| `Ctrl+Shift+F` | Search terminal screen and scrollback output, then jump to a match. |
+| `F8` / `Ctrl+Shift+C` | Copy terminal selection, search line, or editor contents. |
+| `F9` / `Ctrl+Shift+V` | Paste from the system clipboard. |
 | `F10` | Quit Tala. |
 | `Tab` / `Esc` in a sidebar | Focus the terminal or hide the sidebar. |
 | `Ctrl+C` in a session | Interrupt the foreground program. |
 | `Shift+Page Up` / `Shift+Page Down` | Scroll through terminal history. |
 
-Click to switch tabs or use a panel. Drag over terminal text before copying. File previews are read-only and limited to UTF-8 text up to 1 MiB.
+Click to switch tabs, focus split panes, or trigger panel buttons. Drag over terminal text before copying.
+
+### Lightweight editor
+
+Opening a UTF-8 file (up to 1 MiB) shows a syntax-highlighted read-only view with line numbers. Press `e` to enter edit mode, `Ctrl+S` to save, `F8` to copy, and `Esc` to close (with confirmation if there are unsaved changes).
 
 ### Coding agents
 
@@ -69,26 +86,33 @@ Install the provider's CLI before launching it from Tala.
 | Oh My Pi (OMP) | `omp` |
 | Pi | `pi` |
 
-Run `tala --list-profiles` to see what Tala detects. If a CLI is missing, check that its executable is on `PATH`. Restart Tala if the terminal's environment changed after you started it.
-
-Agents run under your operating-system account with the same access they would have in a standalone terminal. Tala does not sandbox them or store their credentials. Sign-in, model selection, and platform support are specific to each CLI.
+You can also add custom agents via `[[agents]]` in `config.toml`. Run `tala --list-profiles` to see what Tala detects. Agents run under your OS account with the same permissions they have in a standalone terminal. Tala does not sandbox them or store credentials.
 
 ### Git
 
-Use `s` to stage, `u` to unstage, and `c` to commit staged changes. Use `f` to fetch, `p` to pull with `--ff-only`, and uppercase `P` to push. The panel works when the selected folder is nested inside a repository. If Git needs interactive authentication, run it in a terminal tab instead.
+The Git panel supports status, diffs, staging, commits, fetch, fast-forward-only pull (`--ff-only`), push, local branch switching and creation (`b`), stash push/list/pop (`S`/`t`), and worktree listing/switching (`w`). If Git needs interactive authentication, run it in a terminal tab.
 
 ## Configuration
 
-Run `tala --config-path` for the exact location. Create `config.toml` there only if you want to override the defaults:
+Run `tala --config-path` for the exact location. Create `config.toml` there only if you want to override defaults:
 
 ```toml
 # Optional. Use a shell ID from `tala --list-profiles`.
 # default_shell = "zsh"
 scrollback = 2000
 mouse = true
+# Available themes: "dark", "light", "ocean", "forest"
+theme = "dark"
+
+# Optional custom coding agent entries:
+# [[agents]]
+# id = "claude"
+# label = "Claude Code"
+# command = "claude"
+# args = []
 ```
 
-Without `default_shell`, Tala uses `$SHELL` if it matches a detected profile, or the first available shell. `scrollback` accepts `0` through `20000` rows per session. Set `mouse = false` to leave mouse handling to your terminal. Unknown keys produce an error at startup.
+Recent workspace folders are stored separately in `state.toml` in the same configuration directory. Unknown keys in `config.toml` produce an error at startup.
 
 ## Development and releases
 
@@ -97,37 +121,33 @@ cargo build --locked
 cargo test --locked
 ```
 
-[Native CI](.github/workflows/ci.yml) builds and tests all six OS and architecture combinations on pull requests and pushes to `main`. It also runs a desktop clipboard round-trip test, using a virtual X11 display on Linux. That test is skipped by default in local runs to avoid changing your clipboard.
+[Native CI](.github/workflows/ci.yml) builds and tests all six OS and architecture combinations on pull requests and pushes to `main`. It also runs a desktop clipboard round-trip test, using a virtual X11 display on Linux.
 
 | Area | Source |
 | --- | --- |
-| Startup, input, and workspace state | [`src/main.rs`](src/main.rs), [`src/app.rs`](src/app.rs) |
-| Terminal UI, PTY sessions, and VT rendering | [`src/ui.rs`](src/ui.rs), [`src/terminal.rs`](src/terminal.rs), [`src/terminal_view.rs`](src/terminal_view.rs) |
-| Files and native Git commands | [`src/workspace.rs`](src/workspace.rs) |
+| Startup, input, and workspace state | [`src/main.rs`](src/main.rs), [`src/app.rs`](src/app.rs), [`src/config.rs`](src/config.rs) |
+| Terminal UI, themes, PTY sessions, and VT rendering | [`src/ui.rs`](src/ui.rs), [`src/theme.rs`](src/theme.rs), [`src/terminal.rs`](src/terminal.rs), [`src/terminal_view.rs`](src/terminal_view.rs) |
+| Lightweight editor, files, and native Git commands | [`src/editor.rs`](src/editor.rs), [`src/workspace.rs`](src/workspace.rs) |
+| Release notes and Unix installer script | [`scripts/release_notes.py`](scripts/release_notes.py), [`scripts/install.sh`](scripts/install.sh) |
 
-When reporting a bug, include the commit or version, OS and architecture, terminal emulator, and steps to reproduce. For a launcher problem, include the shell or agent CLI version and the relevant line from `tala --list-profiles`. Remove credentials and private paths from logs.
+### Versioning and release checklist
 
-### Versioning
+The [changelog](CHANGELOG.md) tracks changes under `Unreleased` until a version ships. The first intended release is `0.1.0`; it has not been published. Tala uses [Semantic Versioning](https://semver.org/):
 
-The [changelog](CHANGELOG.md) tracks changes under `Unreleased` until a version ships. The first intended release is `0.1.0`; it has not been published. Tala uses [Semantic Versioning](https://semver.org/) for its CLI, configuration, and documented behavior:
+- Before `1.0.0`, bump minor for features or breaking changes and patch for compatible fixes.
+- Since `1.0.0`, bump major for breaking changes, minor for backward-compatible features, or patch for compatible fixes.
+- Tag releases `vMAJOR.MINOR.PATCH` and validate locally with `python scripts/release_notes.py v0.1.0` (Python 3.11+).
 
-- Before `1.0.0`, bump the minor version for features or breaking changes and the patch version for compatible fixes.
-- Since `1.0.0`, bump major for breaking changes, minor for backward-compatible features, or patch for backward-compatible fixes.
-- Tag the release `vMAJOR.MINOR.PATCH`. For a prerelease, use a suffix such as `v0.1.0-rc.1`. Do not move a published tag or replace its assets; publish a new version instead.
+Before running the [Release workflow](.github/workflows/release.yml), verify on Windows, macOS, and Linux:
 
-To prepare a release, set `package.version` in `Cargo.toml` and run `cargo check` to update `Cargo.lock`. Move the shipped entries from `Unreleased` to a dated heading such as `## [0.1.0] - YYYY-MM-DD`, using the actual release date. Verify the candidate locally with `python scripts/release_notes.py v0.1.0` (Python 3.11+). The workflow rejects mismatched versions and uses that changelog section as the GitHub release notes.
-
-### Release checklist
-
-Before running the [Release workflow](.github/workflows/release.yml), check these on Windows, macOS, and Linux:
-
-- [ ] Start two terminal sessions, switch tabs, resize, run a command, interrupt it, and close the sessions.
+- [ ] Start terminal tabs and split panes, switch tabs/panes, resize, run a command, interrupt it, and close sessions.
 - [ ] Copy and paste Unicode text using the system clipboard.
-- [ ] Open a folder whose name contains spaces, preview a file, then verify that a new session starts in that folder.
-- [ ] Inspect a diff, stage and unstage a change, commit, and fetch, pull, and push against a test remote.
-- [ ] Detect and launch each supported agent CLI on the platforms where its vendor supports it. Record unavailable combinations.
+- [ ] Open a folder with spaces, create/edit/rename/delete a test file, and confirm new sessions start in the active workspace.
+- [ ] Inspect diffs, stage/unstage, commit, switch branch, stash/pop, and fetch/pull/push against a test remote.
+- [ ] Detect and launch each supported agent CLI where its vendor supports it. Record unavailable combinations.
 
-Run the workflow for an existing tag that points to the selected commit. It publishes six archives to [GitHub Releases](https://github.com/arsyadal/tala/releases) only after the checklist is confirmed and all native jobs pass.
+[`scripts/install.sh`](scripts/install.sh) is ready for Linux and macOS once release archives are published on [GitHub Releases](https://github.com/arsyadal/tala/releases). Homebrew, winget, and crates.io packages remain planned until published.
 
-Homebrew, winget, a Linux installer script, and the crates.io package are planned, not published install channels. Use the source instructions above until release assets exist. The repository does not currently declare a license.
+## License
 
+Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

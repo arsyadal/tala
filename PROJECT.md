@@ -4,12 +4,13 @@ Dokumen ini menjadi rujukan utama untuk keputusan produk dan teknis Tala. Bagian
 
 ## Keputusan aktif
 
-- **Produk:** Tala adalah workspace terminal lokal untuk membuka folder proyek, menjalankan shell atau agen koding di tab, dan bekerja dengan Git. Identitas produk: **Tala · Find your flow.**
+- **Produk:** Tala adalah workspace terminal lokal untuk membuka dan mengedit folder proyek, menjalankan shell atau agen koding di tab maupun split pane, dan bekerja dengan Git. Identitas produk: **Tala · Find your flow.** Logo produk disimpan di [assets/logo.webp](assets/logo.webp).
 - **Platform:** Windows x64/ARM64, Linux x64/ARM64, dan macOS Intel/Apple Silicon adalah target sejak awal. Tidak ada platform yang dianggap siap rilis hanya karena kode berhasil dikompilasi.
-- **Runtime:** Rust dengan Ratatui dan Crossterm untuk TUI, `portable-pty` untuk sesi terminal, filesystem standar Rust, `arboard` untuk clipboard, Git CLI native, dan TOML untuk konfigurasi. Tala tidak memerlukan Tauri, Electron, WebView, Node.js, Docker, atau WSL. WSL adalah profil shell opsional di Windows dan bisa dipakai sebagai lingkungan tes Linux.
+- **Runtime:** Rust dengan Ratatui dan Crossterm untuk TUI, `portable-pty` untuk sesi terminal, filesystem standar Rust, `arboard` untuk clipboard, Git CLI native, dan TOML untuk konfigurasi serta state workspace (`state.toml`). Tala tidak memerlukan Tauri, Electron, WebView, Node.js, Docker, atau WSL. WSL adalah profil shell opsional di Windows dan bisa dipakai sebagai lingkungan tes Linux.
 - **Shell:** PowerShell, CMD, Git Bash, dan WSL di Windows; Bash, Zsh, dan Fish di Linux/macOS. Deteksi profil dari executable yang tersedia. Sediakan jalur keyboard dan mouse tanpa mengharuskan mouse untuk memakai fitur utama.
-- **Agen:** Tala menjalankan CLI interaktif `codex`, `agy`, `omp`, dan `pi` di direktori kerja workspace. Masing-masing CLI mengelola login, model, izin, dan sesi. Dukungan platform Tala tidak menjamin sebuah CLI eksternal tersedia di platform yang sama.
-- **Git:** Gunakan Git CLI yang terpasang untuk status, diff, stage, unstage, commit, fetch, pull fast-forward, dan push. Autentikasi interaktif bisa dilakukan di tab terminal.
+- **Agen:** Tala menjalankan CLI interaktif `codex`, `agy`, `omp`, `pi`, serta custom agent dari `[[agents]]` di `config.toml` pada direktori kerja workspace. Masing-masing CLI mengelola login, model, izin, dan sesi. Dukungan platform Tala tidak menjamin sebuah CLI eksternal tersedia di platform yang sama.
+- **Workspace & Editor:** Mendukung CRUD file/folder dengan konfirmasi hapus, Quick Open (`Ctrl+P`), recent workspaces (`Ctrl+Shift+O`), Command Palette (`Ctrl+Shift+P`), split pane, pencarian output terminal (`Ctrl+Shift+F`), editor teks ringan dengan syntax highlighting, dan tema warna (`dark`, `light`, `ocean`, `forest`).
+- **Git:** Gunakan Git CLI yang terpasang untuk status, diff, stage, unstage, commit, fetch, pull fast-forward, push, branch switcher/create, stash push/list/pop, dan worktree switcher. Autentikasi interaktif bisa dilakukan di tab terminal.
 
 ## Kriteria rilis
 
@@ -20,7 +21,7 @@ Dokumen ini menjadi rujukan utama untuk keputusan produk dan teknis Tala. Bagian
 
 ## Membaca brief awal
 
-Prioritas produk masih mengikuti brief: terminal, workspace, launcher, dan Git. Split pane, editor, CRUD file, pemulihan layout, dan fitur lain dalam roadmap awal adalah ide untuk dievaluasi, bukan fitur yang dianggap sudah ada atau komitmen rilis. Usulan Tauri/React dan pendekatan Windows-first di arsip sudah digantikan oleh keputusan di atas. Angka performa di arsip adalah target awal, bukan hasil pengukuran.
+Prioritas produk masih mengikuti brief: terminal, workspace, launcher, editor ringan, dan Git. Fitur lanjutan lain dalam arsip seperti SSH profile, pemulihan layout antar-sesi, atau keybindings kustom tetap dievaluasi sesuai kebutuhan. Usulan Tauri/React dan pendekatan Windows-first di arsip sudah digantikan oleh keputusan di atas. Angka performa di arsip adalah target awal, bukan hasil pengukuran.
 
 Untuk cara pakai, lihat [README Indonesia](README.id.md) atau [English README](README.md). [Changelog](CHANGELOG.md) mencatat perubahan versi; hasil CI menunjukkan status verifikasi terkini.
 

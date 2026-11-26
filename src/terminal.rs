@@ -1,3 +1,4 @@
+use crate::config::CustomAgentConfig;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -21,9 +22,10 @@ pub enum Kind {
 
 #[derive(Clone, Debug)]
 pub struct Profile {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub command: &'static str,
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
     pub kind: Kind,
     pub available: bool,
 }
@@ -69,7 +71,7 @@ pub struct Session {
 
 impl Session {
     pub fn start(
-        profile: &str,
+        profile: &Profile,
         cwd: &Path,
         cols: u16,
         rows: u16,
@@ -84,7 +86,7 @@ impl Session {
             ));
         }
 
-        Self::start_invocation(resolve_profile(profile)?, profile, cwd, cols, rows)
+        Self::start_invocation(resolve_profile(profile)?, &profile.id, cwd, cols, rows)
     }
 
     fn start_invocation(invocation: Invocation, profile: &str, cwd: &Path, cols: u16, rows: u16) -> Result<Self, String> {
@@ -168,8 +170,8 @@ impl Drop for Session {
     }
 }
 
-pub fn profiles() -> Vec<Profile> {
-    let mut profiles = Vec::with_capacity(8);
+pub fn profiles(custom_agents: &[CustomAgentConfig]) -> Vec<Profile> {
+    let mut profiles = Vec::with_capacity(8 + custom_agents.len());
 
     #[cfg(windows)]
     {
@@ -180,30 +182,34 @@ pub fn profiles() -> Vec<Profile> {
         };
         profiles.extend([
             Profile {
-                id: "powershell",
-                label: "PowerShell",
-                command: powershell_command,
+                id: "powershell".to_owned(),
+                label: "PowerShell".to_owned(),
+                command: powershell_command.to_owned(),
+                args: Vec::new(),
                 kind: Kind::Shell,
                 available: resolve_windows_powershell().is_some(),
             },
             Profile {
-                id: "cmd",
-                label: "Command Prompt",
-                command: "cmd",
+                id: "cmd".to_owned(),
+                label: "Command Prompt".to_owned(),
+                command: "cmd".to_owned(),
+                args: Vec::new(),
                 kind: Kind::Shell,
                 available: resolve_cmd().is_some(),
             },
             Profile {
-                id: "git-bash",
-                label: "Git Bash",
-                command: "bash",
+                id: "git-bash".to_owned(),
+                label: "Git Bash".to_owned(),
+                command: "bash".to_owned(),
+                args: Vec::new(),
                 kind: Kind::Shell,
                 available: resolve_git_bash().is_some(),
             },
             Profile {
-                id: "wsl",
-                label: "WSL",
-                command: "wsl",
+                id: "wsl".to_owned(),
+                label: "WSL".to_owned(),
+                command: "wsl".to_owned(),
+                args: Vec::new(),
                 kind: Kind::Shell,
                 available: find_executable("wsl.exe").is_some(),
             },
@@ -218,30 +224,48 @@ pub fn profiles() -> Vec<Profile> {
     ]);
 
     profiles.extend([
-        agent_profile("codex", "Codex (ChatGPT)", "codex"),
-        agent_profile("agy", "Antigravity", "agy"),
-        agent_profile("omp", "OMP", "omp"),
-        agent_profile("pi", "Pi", "pi"),
+        agent_profile("codex", "Codex (ChatGPT)", "codex", Vec::new()),
+        agent_profile("agy", "Antigravity", "agy", Vec::new()),
+        agent_profile("omp", "OMP", "omp", Vec::new()),
+        agent_profile("pi", "Pi", "pi", Vec::new()),
     ]);
+
+    for custom in custom_agents {
+        if let Some(existing) = profiles.iter_mut().find(|p| p.kind == Kind::Agent && p.id == custom.id) {
+            existing.label = custom.label.clone();
+            existing.command = custom.command.clone();
+            existing.args = custom.args.clone();
+            existing.available = find_executable(&custom.command).is_some();
+        } else {
+            profiles.push(agent_profile(
+                &custom.id,
+                &custom.label,
+                &custom.command,
+                custom.args.clone(),
+            ));
+        }
+    }
     profiles
 }
 
 #[cfg(not(windows))]
-fn shell_profile(id: &'static str, label: &'static str) -> Profile {
+fn shell_profile(id: &str, label: &str) -> Profile {
     Profile {
-        id,
-        label,
-        command: id,
+        id: id.to_owned(),
+        label: label.to_owned(),
+        command: id.to_owned(),
+        args: Vec::new(),
         kind: Kind::Shell,
         available: find_executable(id).is_some(),
     }
 }
 
-fn agent_profile(id: &'static str, label: &'static str, command: &'static str) -> Profile {
+fn agent_profile(id: &str, label: &str, command: &str, args: Vec<String>) -> Profile {
     Profile {
-        id,
-        label,
-        command,
+        id: id.to_owned(),
+        label: label.to_owned(),
+        command: command.to_owned(),
+        args,
         kind: Kind::Agent,
         available: find_executable(command).is_some(),
     }
@@ -249,13 +273,13 @@ fn agent_profile(id: &'static str, label: &'static str, command: &'static str) -
 
 struct Invocation {
     executable: PathBuf,
-    arguments: &'static [&'static str],
+    arguments: Vec<String>,
     #[cfg(windows)]
     cmd_shim: bool,
 }
 
 impl Invocation {
-    fn direct(executable: PathBuf, arguments: &'static [&'static str]) -> Self {
+    fn direct(executable: PathBuf, arguments: Vec<String>) -> Self {
         Self {
             executable,
             arguments,
@@ -275,7 +299,15 @@ impl Invocation {
             quoted_path.push(self.executable);
             quoted_path.push("\"");
             command.env("TALA_COMMAND_SHIM", quoted_path);
-            command.args(["/D", "/V:OFF", "/S", "/C", "%TALA_COMMAND_SHIM%"]);
+            let mut args = vec![
+                "/D".to_owned(),
+                "/V:OFF".to_owned(),
+                "/S".to_owned(),
+                "/C".to_owned(),
+                "%TALA_COMMAND_SHIM%".to_owned(),
+            ];
+            args.extend(self.arguments);
+            command.args(args);
             return Ok(command);
         }
 
@@ -285,29 +317,33 @@ impl Invocation {
     }
 }
 
-fn resolve_profile(profile: &str) -> Result<Invocation, String> {
-    let invocation = match profile {
-        #[cfg(windows)]
-        "powershell" => resolve_windows_powershell()
-            .map(|path| Invocation::direct(path, &["-NoLogo"])),
-        #[cfg(windows)]
-        "cmd" => resolve_cmd().map(|path| Invocation::direct(path, &[])),
-        #[cfg(windows)]
-        "git-bash" => resolve_git_bash()
-            .map(|path| Invocation::direct(path, &["--login", "-i"])),
-        #[cfg(windows)]
-        "wsl" => find_executable("wsl.exe").map(|path| Invocation::direct(path, &["--cd", "."])),
-        #[cfg(not(windows))]
-        "bash" => find_executable("bash").map(|path| Invocation::direct(path, &["-l"])),
-        #[cfg(not(windows))]
-        "zsh" => find_executable("zsh").map(|path| Invocation::direct(path, &["-l"])),
-        #[cfg(not(windows))]
-        "fish" => find_executable("fish").map(|path| Invocation::direct(path, &["-l"])),
-        "codex" | "agy" | "omp" | "pi" => find_executable(profile).map(agent_invocation),
-        _ => return Err(format!("unknown terminal profile '{profile}'")),
+fn resolve_profile(profile: &Profile) -> Result<Invocation, String> {
+    let invocation = match profile.kind {
+        Kind::Shell => match profile.id.as_str() {
+            #[cfg(windows)]
+            "powershell" => resolve_windows_powershell()
+                .map(|path| Invocation::direct(path, vec!["-NoLogo".to_owned()])),
+            #[cfg(windows)]
+            "cmd" => resolve_cmd().map(|path| Invocation::direct(path, Vec::new())),
+            #[cfg(windows)]
+            "git-bash" => resolve_git_bash()
+                .map(|path| Invocation::direct(path, vec!["--login".to_owned(), "-i".to_owned()])),
+            #[cfg(windows)]
+            "wsl" => find_executable("wsl.exe")
+                .map(|path| Invocation::direct(path, vec!["--cd".to_owned(), ".".to_owned()])),
+            #[cfg(not(windows))]
+            "bash" => find_executable("bash").map(|path| Invocation::direct(path, vec!["-l".to_owned()])),
+            #[cfg(not(windows))]
+            "zsh" => find_executable("zsh").map(|path| Invocation::direct(path, vec!["-l".to_owned()])),
+            #[cfg(not(windows))]
+            "fish" => find_executable("fish").map(|path| Invocation::direct(path, vec!["-l".to_owned()])),
+            _ => return Err(format!("unknown terminal profile '{}'", profile.id)),
+        },
+        Kind::Agent => find_executable(&profile.command)
+            .map(|path| agent_invocation(path, profile.args.clone())),
     };
 
-    invocation.ok_or_else(|| format!("terminal profile '{profile}' is not available"))
+    invocation.ok_or_else(|| format!("terminal profile '{}' is not available", profile.id))
 }
 
 fn find_executable(command: &str) -> Option<PathBuf> {
@@ -344,12 +380,12 @@ fn resolve_git_bash() -> Option<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn agent_invocation(path: PathBuf) -> Invocation {
-    Invocation::direct(path, &[])
+fn agent_invocation(path: PathBuf, arguments: Vec<String>) -> Invocation {
+    Invocation::direct(path, arguments)
 }
 
 #[cfg(windows)]
-fn agent_invocation(path: PathBuf) -> Invocation {
+fn agent_invocation(path: PathBuf, arguments: Vec<String>) -> Invocation {
     let cmd_shim = path
         .extension()
         .and_then(OsStr::to_str)
@@ -358,7 +394,7 @@ fn agent_invocation(path: PathBuf) -> Invocation {
         });
     Invocation {
         executable: path,
-        arguments: &[],
+        arguments,
         cmd_shim,
     }
 }
@@ -435,15 +471,35 @@ fn spawn_child_reaper(
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Session};
+    use super::{Event, Kind, Session, profiles};
+    use crate::config::CustomAgentConfig;
     use crate::terminal_view::Replies;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn includes_custom_agents_in_profiles() {
+        let custom = vec![CustomAgentConfig {
+            id: "my-agent".to_owned(),
+            label: "My Agent".to_owned(),
+            command: "nonexistent_tala_agent_xyz".to_owned(),
+            args: vec!["--flag".to_owned()],
+        }];
+        let list = profiles(&custom);
+        let entry = list.iter().find(|p| p.id == "my-agent").expect("custom agent listed");
+        assert_eq!(entry.kind, Kind::Agent);
+        assert_eq!(entry.label, "My Agent");
+        assert_eq!(entry.args, vec!["--flag"]);
+        assert!(!entry.available);
+    }
 
     #[test]
     fn interactive_shell_streams_output_and_exit() {
         let cwd = std::env::current_dir().expect("current directory");
         #[cfg(windows)]
-        let mut session = Session::start("cmd", &cwd, 80, 24).expect("start CMD");
+        let mut session = {
+            let cmd = profiles(&[]).into_iter().find(|p| p.id == "cmd").expect("cmd profile");
+            Session::start(&cmd, &cwd, 80, 24).expect("start CMD")
+        };
         #[cfg(not(windows))]
         let mut session = {
             let shell = super::find_executable("sh").expect("POSIX shell on PATH");
@@ -469,7 +525,6 @@ mod tests {
         {
             const PROMPT: &[u8] = b"TALA_TEST_SHELL> ";
             probe.wait_for(&mut session, 0, PROMPT);
-            // The marker appears in the command's output, not in its terminal echo.
             session
                 .write(b"printf 'TALA_%s\\n' READY_FOR_INPUT; read tala_input\n")
                 .expect("write read command");
@@ -503,7 +558,7 @@ mod tests {
         let directory = tempfile::Builder::new().prefix("Tala & %USERPROFILE% ! ").tempdir().unwrap();
         let shim = directory.path().join("launch.cmd");
         std::fs::write(&shim, b"@echo TALA_AGENT_SHIM_OK\r\n@exit /b 4\r\n").unwrap();
-        let mut session = Session::start_invocation(super::agent_invocation(shim), "test agent", directory.path(), 80, 24).unwrap();
+        let mut session = Session::start_invocation(super::agent_invocation(shim, Vec::new()), "test agent", directory.path(), 80, 24).unwrap();
         let mut probe = Probe::default();
         let code = probe.until_exit(&mut session);
         let transcript = String::from_utf8_lossy(&probe.transcript);

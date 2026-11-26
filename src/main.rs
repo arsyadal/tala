@@ -1,8 +1,10 @@
 mod app;
 mod clipboard;
 mod config;
+mod editor;
 mod terminal;
 mod terminal_view;
+mod theme;
 mod ui;
 mod workspace;
 
@@ -29,7 +31,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let first = args.next();
     match first.as_deref().and_then(OsStr::to_str) {
         Some("--help" | "-h") => {
-            println!("Tala {}\nFind your flow.\n\nUsage: tala [FOLDER]\n       tala --list-profiles\n       tala --config-path\n       tala --version\n\nF1: help   F2: files   F3: launcher   F4: Git   F10: quit", env!("CARGO_PKG_VERSION"));
+            println!(
+                "Tala {}\nFind your flow.\n\nUsage: tala [FOLDER]\n       tala --list-profiles\n       tala --config-path\n       tala --version\n\nF1: help   F2: files   F3: launcher   F4: Git   Ctrl+Shift+P: palette   F10: quit",
+                env!("CARGO_PKG_VERSION")
+            );
             return Ok(());
         }
         Some("--version" | "-V") => { println!("tala {}", env!("CARGO_PKG_VERSION")); return Ok(()); }
@@ -39,7 +44,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some("--list-profiles") => {
-            for profile in terminal::profiles() {
+            let config = Config::load().unwrap_or_default();
+            for profile in terminal::profiles(&config.agents) {
                 println!("{}\t{}\t{}", profile.id, profile.command, if profile.available { "available" } else { "not found" });
             }
             return Ok(());

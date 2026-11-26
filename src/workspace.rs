@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -32,6 +33,24 @@ pub struct GitChange {
 pub struct GitStatus {
     pub branch: String,
     pub changes: Vec<GitChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitStash {
+    pub reference: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitWorktree {
+    pub path: PathBuf,
+    pub branch: String,
 }
 
 pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>, String> {
@@ -69,6 +88,91 @@ pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>, String> {
     Ok(result)
 }
 
+pub fn collect_workspace_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+    let root = std::path::absolute(root)
+        .map_err(|error| format!("Unable to resolve directory '{}': {error}", root.display()))?;
+    let mut queue = VecDeque::from([root.clone()]);
+    let mut files = Vec::new();
+    while let Some(dir) = queue.pop_front() {
+        if files.len() >= limit {
+            break;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else { continue; };
+        let mut children: Vec<_> = entries.flatten().collect();
+        children.sort_by_key(|entry| entry.file_name());
+        for entry in children {
+            let name = entry.file_name();
+            if matches!(
+                name.to_str(),
+                Some(".git" | "target" | "node_modules" | ".venv" | "dist" | "build")
+            ) {
+                continue;
+            }
+            let Ok(ft) = entry.file_type() else { continue; };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                queue.push_back(entry.path());
+            } else if ft.is_file() {
+                files.push(entry.path());
+                if files.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+pub fn create_file(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    validate_entry_name(name)?;
+    let target = dir.join(name);
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|error| format!("Unable to create file '{}': {error}", target.display()))?;
+    Ok(target)
+}
+
+pub fn create_dir(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    validate_entry_name(name)?;
+    let target = dir.join(name);
+    fs::create_dir(&target)
+        .map_err(|error| format!("Unable to create folder '{}': {error}", target.display()))?;
+    Ok(target)
+}
+
+pub fn rename_entry(path: &Path, new_name: &str) -> Result<PathBuf, String> {
+    validate_entry_name(new_name)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Cannot rename root path '{}'", path.display()))?;
+    let target = parent.join(new_name);
+    if target.exists() {
+        return Err(format!("'{}' already exists", target.display()));
+    }
+    fs::rename(path, &target)
+        .map_err(|error| format!("Unable to rename '{}': {error}", path.display()))?;
+    Ok(target)
+}
+
+pub fn delete_entry(path: &Path) -> Result<(), String> {
+    if path.parent().is_none() {
+        return Err(format!("Refusing to delete root path '{}'", path.display()));
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Unable to inspect '{}': {error}", path.display()))?;
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|error| format!("Unable to delete folder '{}': {error}", path.display()))
+    } else {
+        fs::remove_file(path)
+            .map_err(|error| format!("Unable to delete file '{}': {error}", path.display()))
+    }
+}
+
 pub fn read_text(path: &Path) -> Result<String, String> {
     ensure_not_symlink(path)?;
     let mut file = File::open(path)
@@ -91,6 +195,31 @@ pub fn read_text(path: &Path) -> Result<String, String> {
     decode_text(bytes, path)
 }
 
+pub fn write_text(path: &Path, contents: &str) -> Result<(), String> {
+    if path.exists() {
+        ensure_not_symlink(path)?;
+    }
+    if contents.len() > MAX_TEXT_BYTES {
+        return Err("File content exceeds the 1 MiB editor limit".to_owned());
+    }
+    fs::write(path, contents)
+        .map_err(|error| format!("Unable to save '{}': {error}", path.display()))
+}
+
+fn validate_entry_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Name cannot be empty".to_owned());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.as_bytes().contains(&0) {
+        return Err("Name must not contain path separators".to_owned());
+    }
+    let mut components = Path::new(trimmed).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(format!("Invalid file or folder name: '{name}'")),
+    }
+}
 
 pub fn git_status(cwd: &Path) -> Result<Option<GitStatus>, String> {
     let Some(root) = repo_root(cwd)? else {
@@ -204,6 +333,124 @@ pub fn git_sync(cwd: &Path, action: &str) -> Result<String, String> {
     let output = run_git(&root, args, MAX_GIT_MESSAGE_BYTES)?;
     ensure_git_success(action, &output)?;
     successful_git_message(action, output)
+}
+
+pub fn git_branches(cwd: &Path) -> Result<Vec<GitBranch>, String> {
+    let root = require_repo_root(cwd)?;
+    let output = run_git(
+        &root,
+        &["branch", "--format=%(HEAD)\t%(refname:short)"],
+        MAX_GIT_MESSAGE_BYTES,
+    )?;
+    ensure_git_success("branch", &output)?;
+    let stdout = decode_git_stdout("branch", output.stdout)?;
+    let mut branches = Vec::new();
+    for line in stdout.lines() {
+        if let Some((head, name)) = line.split_once('\t') {
+            if !name.is_empty() {
+                branches.push(GitBranch {
+                    name: name.to_owned(),
+                    current: head == "*",
+                });
+            }
+        }
+    }
+    Ok(branches)
+}
+
+pub fn git_switch_branch(cwd: &Path, name: &str, create: bool) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() || name.starts_with('-') {
+        return Err("Invalid branch name".to_owned());
+    }
+    let root = require_repo_root(cwd)?;
+    let check = run_git(&root, &["check-ref-format", "--branch", name], MAX_REPO_PATH_BYTES)?;
+    if !check.status.success() {
+        return Err(format!("Invalid Git branch name: '{name}'"));
+    }
+    let args: &[&str] = if create {
+        &["checkout", "-b", name]
+    } else {
+        &["checkout", name]
+    };
+    let output = run_git(&root, args, MAX_GIT_MESSAGE_BYTES)?;
+    ensure_git_success("checkout", &output)?;
+    successful_git_message("checkout", output)
+}
+
+pub fn git_stashes(cwd: &Path) -> Result<Vec<GitStash>, String> {
+    let root = require_repo_root(cwd)?;
+    let output = run_git(
+        &root,
+        &["stash", "list", "--format=%gd\t%gs"],
+        MAX_GIT_MESSAGE_BYTES,
+    )?;
+    ensure_git_success("stash list", &output)?;
+    let stdout = decode_git_stdout("stash list", output.stdout)?;
+    let mut stashes = Vec::new();
+    for line in stdout.lines() {
+        if let Some((reference, summary)) = line.split_once('\t') {
+            stashes.push(GitStash {
+                reference: reference.to_owned(),
+                summary: summary.to_owned(),
+            });
+        }
+    }
+    Ok(stashes)
+}
+
+pub fn git_stash_push(cwd: &Path, message: Option<&str>) -> Result<String, String> {
+    let root = require_repo_root(cwd)?;
+    let trimmed = message.map(str::trim).filter(|s| !s.is_empty());
+    let output = match trimmed {
+        Some(msg) => run_git(&root, &["stash", "push", "--include-untracked", "-m", msg], MAX_GIT_MESSAGE_BYTES)?,
+        None => run_git(&root, &["stash", "push", "--include-untracked"], MAX_GIT_MESSAGE_BYTES)?,
+    };
+    ensure_git_success("stash push", &output)?;
+    successful_git_message("stash push", output)
+}
+
+pub fn git_stash_pop(cwd: &Path, reference: Option<&str>) -> Result<String, String> {
+    let root = require_repo_root(cwd)?;
+    let output = match reference {
+        Some(reference) => run_git(&root, &["stash", "pop", reference], MAX_GIT_MESSAGE_BYTES)?,
+        None => run_git(&root, &["stash", "pop"], MAX_GIT_MESSAGE_BYTES)?,
+    };
+    ensure_git_success("stash pop", &output)?;
+    successful_git_message("stash pop", output)
+}
+
+pub fn git_worktrees(cwd: &Path) -> Result<Vec<GitWorktree>, String> {
+    let root = require_repo_root(cwd)?;
+    let output = run_git(&root, &["worktree", "list", "--porcelain"], MAX_GIT_MESSAGE_BYTES)?;
+    ensure_git_success("worktree list", &output)?;
+    let stdout = decode_git_stdout("worktree list", output.stdout)?;
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch = String::new();
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(prev) = current_path.take() {
+                worktrees.push(GitWorktree {
+                    path: prev,
+                    branch: if current_branch.is_empty() { "(detached)".to_owned() } else { std::mem::take(&mut current_branch) },
+                });
+            }
+            current_path = Some(PathBuf::from(path));
+            current_branch.clear();
+        } else if let Some(branch) = line.strip_prefix("branch ") {
+            current_branch = branch.strip_prefix("refs/heads/").unwrap_or(branch).to_owned();
+        } else if line == "bare" {
+            current_branch = "(bare)".to_owned();
+        }
+    }
+    if let Some(prev) = current_path {
+        worktrees.push(GitWorktree {
+            path: prev,
+            branch: if current_branch.is_empty() { "(detached)".to_owned() } else { current_branch },
+        });
+    }
+    Ok(worktrees)
 }
 
 fn ensure_not_symlink(path: &Path) -> Result<(), String> {
@@ -580,6 +827,26 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn file_crud_and_quick_open_collect_files() {
+        let temp = TempDir::new().unwrap();
+        let folder = create_dir(temp.path(), "src").unwrap();
+        let file = create_file(&folder, "draft.txt").unwrap();
+        write_text(&file, "hello tala").unwrap();
+        assert_eq!(read_text(&file).unwrap(), "hello tala");
+
+        let renamed = rename_entry(&file, "main.rs").unwrap();
+        assert!(renamed.is_file());
+        assert!(!file.exists());
+        assert!(create_file(temp.path(), "../escape.txt").is_err());
+
+        let found = collect_workspace_files(temp.path(), 100).unwrap();
+        assert_eq!(found, vec![renamed.clone()]);
+
+        delete_entry(&folder).unwrap();
+        assert!(!folder.exists());
+    }
+
+    #[test]
     fn git_workflow_handles_nested_workspace_and_literal_path() {
         let temp = TempDir::new().expect("create temporary repository");
         setup_git(temp.path(), &["init"]);
@@ -636,6 +903,20 @@ mod tests {
         assert!(status.changes.iter().any(|change| {
             change.path == file_name && change.unstaged && !change.staged && !change.untracked
         }));
+
+        git_stash_push(&workspace, Some("wip")).expect("stash push");
+        let stashes = git_stashes(&workspace).expect("list stashes");
+        assert_eq!(stashes.len(), 1);
+        assert!(stashes[0].summary.contains("wip"));
+        git_stash_pop(&workspace, Some(&stashes[0].reference)).expect("stash pop");
+
+        git_switch_branch(&workspace, "feature-tala", true).expect("create branch");
+        let branches = git_branches(&workspace).expect("list branches");
+        assert!(branches.iter().any(|b| b.name == "feature-tala" && b.current));
+
+        let worktrees = git_worktrees(&workspace).expect("list worktrees");
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, "feature-tala");
     }
 
     fn setup_git(cwd: &Path, args: &[&str]) {
