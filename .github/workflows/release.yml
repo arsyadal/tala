@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag pointing at the selected workflow commit
+        description: Existing vMAJOR.MINOR.PATCH tag (prerelease suffix optional) pointing at the selected commit
         required: true
         type: string
       real_terminal_checked:
@@ -74,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require release tag to point at selected code
+      - name: Validate release tag, version, and changelog
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -86,6 +86,7 @@ jobs:
             echo "Release tag does not point at the commit selected for this run." >&2
             exit 1
           fi
+          python3 scripts/release_notes.py "$RELEASE_TAG" > /dev/null
 
   native:
     name: Build and test native release
@@ -160,7 +161,14 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/tala-release-notes.md"
+          python3 scripts/release_notes.py "$RELEASE_TAG" > "$notes"
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" release-assets/* \
             --verify-tag \
-            --generate-notes \
-            --title "Tala $RELEASE_TAG"
+            --notes-file "$notes" \
+            --title "Tala $RELEASE_TAG" \
+            "${flags[@]}"
