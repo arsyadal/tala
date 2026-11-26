@@ -1,0 +1,25 @@
+[package]
+name = "tala"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A cross-platform terminal workspace for local projects and coding agents"
+readme = "README.md"
+
+[dependencies]
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+crossterm = "0.29"
+dirs = "6"
+portable-pty = "0.9"
+ratatui = { version = "0.30.0", default-features = false, features = ["crossterm"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+vt100 = "0.16"
+which = "8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"

@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag pointing at the selected workflow commit
+        required: true
+        type: string
+      real_terminal_checked:
+        description: Confirmed real-terminal behavior on Windows, macOS, and Linux
+        required: true
+        default: false
+        type: boolean
+      clipboard_checked:
+        description: Confirmed clipboard behavior on Windows, macOS, and Linux
+        required: true
+        default: false
+        type: boolean
+      explorer_checked:
+        description: Confirmed native file-explorer behavior on Windows, macOS, and Linux
+        required: true
+        default: false
+        type: boolean
+      git_checked:
+        description: Confirmed Git behavior on Windows, macOS, and Linux
+        required: true
+        default: false
+        type: boolean
+      external_agents_checked:
+        description: Confirmed external-agent behavior on Windows, macOS, and Linux
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Validate manual release gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require every platform checklist confirmation
+        shell: bash
+        env:
+          REAL_TERMINAL_CHECKED: ${{ inputs.real_terminal_checked }}
+          CLIPBOARD_CHECKED: ${{ inputs.clipboard_checked }}
+          EXPLORER_CHECKED: ${{ inputs.explorer_checked }}
+          GIT_CHECKED: ${{ inputs.git_checked }}
+          EXTERNAL_AGENTS_CHECKED: ${{ inputs.external_agents_checked }}
+        run: |
+          set -euo pipefail
+          for confirmation in \
+            REAL_TERMINAL_CHECKED \
+            CLIPBOARD_CHECKED \
+            EXPLORER_CHECKED \
+            GIT_CHECKED \
+            EXTERNAL_AGENTS_CHECKED
+          do
+            if [[ "${!confirmation}" != "true" ]]; then
+              echo "Every platform checklist must be explicitly confirmed." >&2
+              exit 1
+            fi
+          done
+
+      - name: Check out selected code and tags
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Require release tag to point at selected code
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          tag_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Release tag does not point at the commit selected for this run." >&2
+            exit 1
+          fi
+
+  native:
+    name: Build and test native release
+    needs: gate
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_artifacts: true
+    permissions:
+      contents: read
+
+  publish:
+    name: Create GitHub release
+    needs:
+      - gate
+      - native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out released code and tags
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Revalidate release tag after native jobs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          tag_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Release tag moved or no longer identifies the tested commit." >&2
+            exit 1
+          fi
+
+      - name: Download native release archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify complete release asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_assets=(
+            tala-windows-x86_64.zip
+            tala-windows-aarch64.zip
+            tala-linux-x86_64.tar.gz
+            tala-linux-aarch64.tar.gz
+            tala-macos-x86_64.tar.gz
+            tala-macos-aarch64.tar.gz
+          )
+          for asset in "${expected_assets[@]}"; do
+            test -f "release-assets/$asset"
+          done
+          asset_count="$(find release-assets -maxdepth 1 -type f | wc -l)"
+          if [[ "$asset_count" -ne "${#expected_assets[@]}" ]]; then
+            echo "Release asset set contains missing or unexpected files." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag \
+            --generate-notes \
+            --title "Tala $RELEASE_TAG"
