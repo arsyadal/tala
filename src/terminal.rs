@@ -88,6 +88,10 @@ impl Session {
     }
 
     fn start_invocation(invocation: Invocation, profile: &str, cwd: &Path, cols: u16, rows: u16) -> Result<Self, String> {
+        Self::start_command(invocation.command_builder()?, profile, cwd, cols, rows)
+    }
+
+    fn start_command(mut command: CommandBuilder, profile: &str, cwd: &Path, cols: u16, rows: u16) -> Result<Self, String> {
         let pty = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -106,7 +110,6 @@ impl Session {
             .take_writer()
             .map_err(|error| format!("failed to open terminal input: {error}"))?;
 
-        let mut command = invocation.command_builder()?;
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         if profile == "git-bash" {
@@ -432,17 +435,25 @@ fn spawn_child_reaper(
 
 #[cfg(test)]
 mod tests {
-    use super::{profiles, Event, Session};
+    use super::{Event, Session};
     use crate::terminal_view::Replies;
-    #[cfg(not(windows))]
-    use super::Kind;
     use std::time::{Duration, Instant};
 
     #[test]
     fn interactive_shell_streams_output_and_exit() {
-        let profile = test_shell_profile().expect("an interactive shell must be available");
         let cwd = std::env::current_dir().expect("current directory");
-        let mut session = Session::start(profile, &cwd, 80, 24).expect("start terminal");
+        #[cfg(windows)]
+        let mut session = Session::start("cmd", &cwd, 80, 24).expect("start CMD");
+        #[cfg(not(windows))]
+        let mut session = {
+            let shell = super::find_executable("sh").expect("POSIX shell on PATH");
+            let mut command = super::CommandBuilder::new(shell);
+            command.arg("-i");
+            command.env("PS1", "TALA_TEST_SHELL> ");
+            command.env_remove("ENV");
+            command.env_remove("BASH_ENV");
+            Session::start_command(command, "sh", &cwd, 80, 24).expect("start POSIX shell")
+        };
         let mut probe = Probe::default();
 
         #[cfg(windows)]
@@ -456,14 +467,20 @@ mod tests {
         }
         #[cfg(not(windows))]
         {
+            const PROMPT: &[u8] = b"TALA_TEST_SHELL> ";
+            probe.wait_for(&mut session, 0, PROMPT);
+            // The marker appears in the command's output, not in its terminal echo.
             session
-                .write(b"read tala_input\n")
+                .write(b"printf 'TALA_%s\\n' READY_FOR_INPUT; read tala_input\n")
                 .expect("write read command");
+            probe.wait_for(&mut session, 0, b"TALA_READY_FOR_INPUT");
+            let after_read = probe.transcript.len();
             session
                 .write(b"terminal-input\n")
                 .expect("write interactive input");
+            probe.wait_for(&mut session, after_read, PROMPT);
             session
-                .write(b"printf 'TALA_TRANSCRIPT_%s\\n' \"$tala_input\"\nexit 7\n")
+                .write(b"printf 'TALA_TRANSCRIPT_%s\\n' \"$tala_input\"; exit 7\n")
                 .expect("write output and exit commands");
         }
 
@@ -525,27 +542,22 @@ mod tests {
             }
         }
 
+        #[cfg(not(windows))]
+        fn wait_for(&mut self, session: &mut Session, start: usize, marker: &[u8]) {
+            while !self.transcript[start..].windows(marker.len()).any(|chunk| chunk == marker) {
+                assert!(
+                    self.receive(session).is_none(),
+                    "shell exited before emitting {:?}; transcript: {:?}",
+                    String::from_utf8_lossy(marker),
+                    String::from_utf8_lossy(&self.transcript),
+                );
+            }
+        }
+
         fn until_exit(&mut self, session: &mut Session) -> Option<u32> {
             loop {
                 if let Some(code) = self.receive(session) { return code; }
             }
-        }
-    }
-
-    fn test_shell_profile() -> Option<&'static str> {
-        #[cfg(windows)]
-        {
-            return profiles()
-                .into_iter()
-                .find(|profile| profile.id == "cmd" && profile.available)
-                .map(|profile| profile.id);
-        }
-        #[cfg(not(windows))]
-        {
-            profiles()
-                .into_iter()
-                .find(|profile| profile.kind == Kind::Shell && profile.available)
-                .map(|profile| profile.id)
         }
     }
 }
